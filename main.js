@@ -190,10 +190,20 @@ function loop(ts) {
 
 requestAnimationFrame(loop);
 
-// ─── Input (pointer covers mouse + touch) ─────────────────────
+// ─── Input ────────────────────────────────────────────────────
 canvas.addEventListener('pointerdown', e => {
   startAudio();
   addRipple(e.clientX, e.clientY);
+});
+
+// iOS Safari は pointerdown を発火しないケースがあるため補完
+canvas.addEventListener('touchstart', e => {
+  startAudio();
+  for (const t of e.changedTouches) addRipple(t.clientX, t.clientY);
+}, { passive: true });
+
+canvas.addEventListener('click', e => {
+  startAudio();
 });
 
 // ─── Audio ────────────────────────────────────────────────────
@@ -204,6 +214,7 @@ function startAudio() {
   audioStarted = true;
 
   const ac = new (window.AudioContext || window.webkitAudioContext)();
+  ac.resume(); // iOS Safari: suspended状態を確実に解除
 
   // — Drone 1: fundamental ~42 Hz (deep, barely felt)
   const osc1 = ac.createOscillator();
