@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>audio test</title>
+  <style>
+    body {
+      margin: 0;
+      background: #111;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      color: #fff;
+      font-family: sans-serif;
+      font-size: 18px;
+      user-select: none;
+    }
+  </style>
+</head>
+<body>
+  tap anywhere
+  <script>
+    document.addEventListener('pointerdown', function handler() {
+      document.removeEventListener('pointerdown', handler);
+
+      var ac = new (window.AudioContext || window.webkitAudioContext)();
+      ac.resume();
+
+      var osc = ac.createOscillator();
+      var g   = ac.createGain();
+      osc.frequency.value = 440;
+      g.gain.value = 0.3;
+
+      osc.connect(g);
+      g.connect(ac.destination);
+
+      osc.start();
+      osc.stop(ac.currentTime + 0.2);
+
+      document.body.textContent = 'state: ' + ac.state;
+    });
+  </script>
+</body>
+</html>

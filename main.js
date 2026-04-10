@@ -190,25 +190,57 @@ function loop(ts) {
 
 requestAnimationFrame(loop);
 
-// ─── Input ────────────────────────────────────────────────────
-canvas.addEventListener('pointerdown', e => {
+// ─── 初回タップ要素 ───────────────────────────────────────────
+// 小さな円を中央に表示し、明確なユーザー操作を受け取る
+const tapDot = document.createElement('div');
+tapDot.style.cssText = [
+  'position:fixed',
+  'top:50%', 'left:50%',
+  'transform:translate(-50%,-50%)',
+  'width:48px', 'height:48px',
+  'border-radius:50%',
+  'background:rgba(160,210,240,0.18)',
+  'border:1px solid rgba(160,210,240,0.5)',
+  'box-shadow:0 0 18px rgba(140,200,240,0.25)',
+  'z-index:9999',
+  'cursor:pointer',
+  'animation:pulse 3s ease-in-out infinite',
+  'transition:opacity 0.8s ease',
+].join(';');
+document.body.appendChild(tapDot);
+
+// pulse アニメーション
+const style = document.createElement('style');
+style.textContent = '@keyframes pulse{0%,100%{transform:translate(-50%,-50%) scale(1);opacity:0.7}50%{transform:translate(-50%,-50%) scale(1.25);opacity:1}}';
+document.head.appendChild(style);
+
+let tapDone = false;
+
+function onTapDot(e) {
+  if (tapDone) return;
+  tapDone = true;
+
   startAudio();
+
+  const src = e.changedTouches ? e.changedTouches[0] : e;
+  addRipple(src.clientX, src.clientY);
+
+  // フェードアウトして削除
+  tapDot.style.opacity = '0';
+  setTimeout(() => tapDot.remove(), 800);
+}
+
+tapDot.addEventListener('touchstart',  onTapDot, { passive: true });
+tapDot.addEventListener('pointerdown', onTapDot, { passive: true });
+
+// ─── Input（オーバーレイ消去後の通常操作）────────────────────────
+canvas.addEventListener('pointerdown', e => {
   addRipple(e.clientX, e.clientY);
 });
 
 canvas.addEventListener('touchstart', e => {
-  startAudio();
   for (const t of e.changedTouches) addRipple(t.clientX, t.clientY);
 }, { passive: true });
-
-canvas.addEventListener('click', e => {
-  startAudio();
-});
-
-// Android Chrome: document レベルでも拾う（canvas外タップ・イベント未到達対策）
-['pointerdown', 'touchstart', 'click'].forEach(type => {
-  document.addEventListener(type, () => startAudio(), { once: true, passive: true });
-});
 
 // ─── Audio ────────────────────────────────────────────────────
 let audioStarted = false;
@@ -217,45 +249,55 @@ function startAudio() {
   if (audioStarted) return;
   audioStarted = true;
 
+  // ユーザー操作の中で同期的に AudioContext を作成する（重要）
+  // await を一切使わない → Chrome のジェスチャー判定から外れないようにする
   const ac = new (window.AudioContext || window.webkitAudioContext)();
+  ac.resume(); // fire-and-forget（awaitしない）
 
-  // resume を待ってからノードを開始（Android Chrome 対策）
-  const boot = ac.state === 'running' ? Promise.resolve() : ac.resume();
-  boot.then(() => {
-    // — Drone 1: fundamental ~42 Hz
-    const osc1 = ac.createOscillator();
-    const g1   = ac.createGain();
-    osc1.type = 'sine'; osc1.frequency.value = 42; g1.gain.value = 0.055;
-    osc1.connect(g1); g1.connect(ac.destination); osc1.start();
+  // 同期的にほぼ無音の短いトーンを鳴らす
+  // → Chrome に「ユーザー操作の瞬間に発音した」と認識させる
+  const unlock = ac.createOscillator();
+  const gUnlock = ac.createGain();
+  gUnlock.gain.value = 0.001;
+  unlock.connect(gUnlock);
+  gUnlock.connect(ac.destination);
+  unlock.start();
+  unlock.stop(ac.currentTime + 0.01);
 
-    // — Drone 2: perfect fifth (63 Hz)
-    const osc2 = ac.createOscillator();
-    const g2   = ac.createGain();
-    osc2.type = 'sine'; osc2.frequency.value = 63; g2.gain.value = 0.028;
-    osc2.connect(g2); g2.connect(ac.destination); osc2.start();
+  // ドローン・ノイズも同期的に開始する
+  // — Drone 1: fundamental ~42 Hz
+  const osc1 = ac.createOscillator();
+  const g1   = ac.createGain();
+  osc1.type = 'sine'; osc1.frequency.value = 42; g1.gain.value = 0.055;
+  osc1.connect(g1); g1.connect(ac.destination); osc1.start();
 
-    // — Drone 3: octave (84 Hz)
-    const osc3 = ac.createOscillator();
-    const g3   = ac.createGain();
-    osc3.type = 'sine'; osc3.frequency.value = 84; g3.gain.value = 0.012;
-    osc3.connect(g3); g3.connect(ac.destination); osc3.start();
+  // — Drone 2: perfect fifth (63 Hz)
+  const osc2 = ac.createOscillator();
+  const g2   = ac.createGain();
+  osc2.type = 'sine'; osc2.frequency.value = 63; g2.gain.value = 0.028;
+  osc2.connect(g2); g2.connect(ac.destination); osc2.start();
 
-    // — White noise → lowpass (water rumble)
-    const sr   = ac.sampleRate;
-    const buf  = ac.createBuffer(1, sr * 5, sr);
-    const data = buf.getChannelData(0);
-    for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
+  // — Drone 3: octave (84 Hz)
+  const osc3 = ac.createOscillator();
+  const g3   = ac.createGain();
+  osc3.type = 'sine'; osc3.frequency.value = 84; g3.gain.value = 0.012;
+  osc3.connect(g3); g3.connect(ac.destination); osc3.start();
 
-    const noiseSrc = ac.createBufferSource();
-    noiseSrc.buffer = buf; noiseSrc.loop = true;
+  // — White noise → lowpass (water rumble)
+  const sr   = ac.sampleRate;
+  const buf  = ac.createBuffer(1, sr * 5, sr);
+  const data = buf.getChannelData(0);
+  for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
 
-    const lpf = ac.createBiquadFilter();
-    lpf.type = 'lowpass'; lpf.frequency.value = 380; lpf.Q.value = 0.7;
+  const noiseSrc = ac.createBufferSource();
+  noiseSrc.buffer = buf; noiseSrc.loop = true;
 
-    const gNoise = ac.createGain();
-    gNoise.gain.value = 0.016;
+  const lpf = ac.createBiquadFilter();
+  lpf.type = 'lowpass'; lpf.frequency.value = 380; lpf.Q.value = 0.7;
 
-    noiseSrc.connect(lpf); lpf.connect(gNoise); gNoise.connect(ac.destination);
-    noiseSrc.start();
-  });
+  const gNoise = ac.createGain();
+  gNoise.gain.value = 0.016;
+
+  noiseSrc.connect(lpf); lpf.connect(gNoise); gNoise.connect(ac.destination);
+  noiseSrc.start();
 }
