@@ -196,7 +196,6 @@ canvas.addEventListener('pointerdown', e => {
   addRipple(e.clientX, e.clientY);
 });
 
-// iOS Safari は pointerdown を発火しないケースがあるため補完
 canvas.addEventListener('touchstart', e => {
   startAudio();
   for (const t of e.changedTouches) addRipple(t.clientX, t.clientY);
@@ -204,6 +203,11 @@ canvas.addEventListener('touchstart', e => {
 
 canvas.addEventListener('click', e => {
   startAudio();
+});
+
+// Android Chrome: document レベルでも拾う（canvas外タップ・イベント未到達対策）
+['pointerdown', 'touchstart', 'click'].forEach(type => {
+  document.addEventListener(type, () => startAudio(), { once: true, passive: true });
 });
 
 // ─── Audio ────────────────────────────────────────────────────
@@ -214,58 +218,44 @@ function startAudio() {
   audioStarted = true;
 
   const ac = new (window.AudioContext || window.webkitAudioContext)();
-  ac.resume(); // iOS Safari: suspended状態を確実に解除
 
-  // — Drone 1: fundamental ~42 Hz (deep, barely felt)
-  const osc1 = ac.createOscillator();
-  const g1   = ac.createGain();
-  osc1.type            = 'sine';
-  osc1.frequency.value = 42;
-  g1.gain.value        = 0.055;
-  osc1.connect(g1);
-  g1.connect(ac.destination);
-  osc1.start();
+  // resume を待ってからノードを開始（Android Chrome 対策）
+  const boot = ac.state === 'running' ? Promise.resolve() : ac.resume();
+  boot.then(() => {
+    // — Drone 1: fundamental ~42 Hz
+    const osc1 = ac.createOscillator();
+    const g1   = ac.createGain();
+    osc1.type = 'sine'; osc1.frequency.value = 42; g1.gain.value = 0.055;
+    osc1.connect(g1); g1.connect(ac.destination); osc1.start();
 
-  // — Drone 2: perfect fifth above (63 Hz)
-  const osc2 = ac.createOscillator();
-  const g2   = ac.createGain();
-  osc2.type            = 'sine';
-  osc2.frequency.value = 63;
-  g2.gain.value        = 0.028;
-  osc2.connect(g2);
-  g2.connect(ac.destination);
-  osc2.start();
+    // — Drone 2: perfect fifth (63 Hz)
+    const osc2 = ac.createOscillator();
+    const g2   = ac.createGain();
+    osc2.type = 'sine'; osc2.frequency.value = 63; g2.gain.value = 0.028;
+    osc2.connect(g2); g2.connect(ac.destination); osc2.start();
 
-  // — Drone 3: octave above fundamental (84 Hz), very quiet
-  const osc3 = ac.createOscillator();
-  const g3   = ac.createGain();
-  osc3.type            = 'sine';
-  osc3.frequency.value = 84;
-  g3.gain.value        = 0.012;
-  osc3.connect(g3);
-  g3.connect(ac.destination);
-  osc3.start();
+    // — Drone 3: octave (84 Hz)
+    const osc3 = ac.createOscillator();
+    const g3   = ac.createGain();
+    osc3.type = 'sine'; osc3.frequency.value = 84; g3.gain.value = 0.012;
+    osc3.connect(g3); g3.connect(ac.destination); osc3.start();
 
-  // — White noise → lowpass (water rumble layer)
-  const sr   = ac.sampleRate;
-  const buf  = ac.createBuffer(1, sr * 5, sr); // 5s looping buffer
-  const data = buf.getChannelData(0);
-  for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
+    // — White noise → lowpass (water rumble)
+    const sr   = ac.sampleRate;
+    const buf  = ac.createBuffer(1, sr * 5, sr);
+    const data = buf.getChannelData(0);
+    for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
 
-  const noiseSrc    = ac.createBufferSource();
-  noiseSrc.buffer   = buf;
-  noiseSrc.loop     = true;
+    const noiseSrc = ac.createBufferSource();
+    noiseSrc.buffer = buf; noiseSrc.loop = true;
 
-  const lpf         = ac.createBiquadFilter();
-  lpf.type          = 'lowpass';
-  lpf.frequency.value = 380;
-  lpf.Q.value       = 0.7;
+    const lpf = ac.createBiquadFilter();
+    lpf.type = 'lowpass'; lpf.frequency.value = 380; lpf.Q.value = 0.7;
 
-  const gNoise      = ac.createGain();
-  gNoise.gain.value = 0.016;
+    const gNoise = ac.createGain();
+    gNoise.gain.value = 0.016;
 
-  noiseSrc.connect(lpf);
-  lpf.connect(gNoise);
-  gNoise.connect(ac.destination);
-  noiseSrc.start();
+    noiseSrc.connect(lpf); lpf.connect(gNoise); gNoise.connect(ac.destination);
+    noiseSrc.start();
+  });
 }
